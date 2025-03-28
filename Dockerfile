@@ -19,22 +19,50 @@ ARG PGBOUNCER_VERSION=1.24.0
 
 FROM debian:${DEBIAN_VERSION} AS build
 ARG PGBOUNCER_VERSION
+WORKDIR /tmp
 
 # Install build dependencies.
 RUN set -ex; \
     apt-get update && apt-get upgrade -y; \
-    apt-get install -y --no-install-recommends curl make pkg-config libevent-dev build-essential libssl-dev libudns-dev openssl ; \
+    apt-get install -y --no-install-recommends curl make pkg-config libevent-dev build-essential libssl-dev libudns-dev openssl python3 python3-pip python3-venv pandoc postgresql ; \
     apt-get purge -y --auto-remove ; \
     rm -fr /tmp/* ; \
     rm -rf /var/lib/apt/lists/*
 
+RUN usermod -u 26 postgres
+USER 26
+
 # build pgbouncer
-RUN  curl -sL http://www.pgbouncer.org/downloads/files/${PGBOUNCER_VERSION}/pgbouncer-${PGBOUNCER_VERSION}.tar.gz > pgbouncer.tar.gz ; \
-     tar xzf pgbouncer.tar.gz ; \
-     cd pgbouncer-${PGBOUNCER_VERSION} ; \
+#
+# this dockerfile was used for testing a local copy of pgbouncer from source. not an ideal or clean approache, but it works.
+# > gh repo clone pgbouncer/pgbouncer
+# > cd pgbouncer
+# > git submodule init
+# > git submodule update
+# > ./autogen.sh
+# > cd ..
+# > tar czvf pgbouncer-containers/pgbouncer.tar.gz pgbouncer/
+#
+# > cd pgbouncer-containers
+# > docker build . --target test
+#
+COPY pgbouncer.tar.gz .
+RUN  tar xzf pgbouncer.tar.gz ; \
+     cd pgbouncer ; \
      sh ./configure --without-cares --with-udns ;  \
      make
 
+FROM build AS test
+WORKDIR /tmp/pgbouncer
+
+RUN set -ex; \
+    python3 -m venv /tmp/venv
+
+ENV PATH="/tmp/venv/bin:/usr/lib/postgresql/15/bin/:$PATH"
+
+RUN set -ex; \
+    pip3 install -Ur requirements.txt ; \
+    pytest -n auto
 
 FROM debian:${DEBIAN_VERSION}
 ARG DEBIAN_VERSION
@@ -62,9 +90,9 @@ RUN  set -ex; \
      chown pgbouncer:pgbouncer /var/log/pgbouncer ; \
      chown pgbouncer:pgbouncer /var/run/pgbouncer ;
 
-COPY --from=build ["/pgbouncer-${PGBOUNCER_VERSION}/pgbouncer", "/usr/bin/"]
-COPY --from=build ["/pgbouncer-${PGBOUNCER_VERSION}/etc/pgbouncer.ini", "/etc/pgbouncer/pgbouncer.ini.example"]
-COPY --from=build ["/pgbouncer-${PGBOUNCER_VERSION}/etc/userlist.txt", "/etc/pgbouncer/userlist.txt.example"]
+COPY --from=build ["/tmp/pgbouncer/pgbouncer", "/usr/bin/"]
+COPY --from=build ["/tmp/pgbouncer/etc/pgbouncer.ini", "/etc/pgbouncer/pgbouncer.ini.example"]
+COPY --from=build ["/tmp/pgbouncer/etc/userlist.txt", "/etc/pgbouncer/userlist.txt.example"]
 
 RUN touch /etc/pgbouncer/pgbouncer.ini /etc/pgbouncer/userlist.txt
 
